@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+:root {
+  --color-navy: #0b1a60;
+  --color-teal-dark: #167173;
+  --color-teal: #3fa5a4;
+  --color-mint: #86ddd0;
+  --color-surface: #eefaf7;
+  --color-text: #0f2b47;
+}
+
+body {
+  color: var(--color-text);
+  background:
+    linear-gradient(180deg, rgba(134, 221, 208, 0.28) 0%, rgba(238, 250, 247, 0.95) 180px),
+    var(--color-surface);
+}
