@@ -4,6 +4,7 @@
  */
 
 import { createContext, useContext, useState, useEffect } from 'react';
+import apiFetch from '../utils/api';
 
 const AuthContext = createContext(null);
 
@@ -15,7 +16,7 @@ export function AuthProvider({ children }) {
     // Check if the user is authenticated on initial load
     const token = localStorage.getItem('token');
     if (token) {
-      fetch('/api/check-auth', {
+      apiFetch('/api/check-auth', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -39,7 +40,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (username, password) => {
-    const response = await fetch('/api/login', {
+    const response = await apiFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -56,7 +57,7 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     const token = localStorage.getItem('token');
     if (token) {
-      await fetch('/api/logout', { 
+      await apiFetch('/api/logout', { 
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
