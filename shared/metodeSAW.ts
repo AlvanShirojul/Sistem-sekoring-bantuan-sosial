@@ -1,3 +1,6 @@
+import cp from 'child_process';
+import path from 'path';
+
 export interface SawScoringInput {
   id?: number | string;
   monthly_income?: number | null;
@@ -20,6 +23,10 @@ export interface SawCalculationRow extends SawScoringResult {
   raw_employment: number | null;
   raw_house: number | null;
   raw_family: number | null;
+  raw_poverty: number | null; 
+  max_poverty: number | null;
+  normalized_poverty: number | null;
+  weighted_poverty: number | null;
   min_income: number | null;
   max_income: number | null;
   max_employment: number | null;
@@ -41,6 +48,7 @@ export interface SawCalculationRow extends SawScoringResult {
 
 export const SAW_CRITERIA_META = [
   { key: 'income', label: 'Penghasilan Bulanan', type: 'benefit' },
+  { key: 'poverty', label: 'Tingkat Kemiskinan', type: 'benefit' },
   { key: 'house', label: 'Kondisi Rumah', type: 'benefit' },
   { key: 'family', label: 'Jumlah Tanggungan', type: 'benefit' },
   { key: 'employment', label: 'Status Pekerjaan', type: 'benefit' },
@@ -58,6 +66,7 @@ export interface SawCriteriaOption {
 
 export const SAW_CRITERIA_LABELS: Record<SawKnownCriteriaKey, string> = {
   income: 'Penghasilan Bulanan',
+  poverty: 'Tingkat Kemiskinan',
   house: 'Kondisi Rumah',
   family: 'Jumlah Tanggungan',
   employment: 'Status Pekerjaan',
@@ -128,7 +137,9 @@ function expandActiveCriteria(activeCriteria: string[] | undefined, criteriaOpti
     }
   }
 
-  return Array.from(new Set(expanded));
+  const expandedMap = new Map<string, true>();
+  for (const item of expanded) expandedMap.set(item, true);
+  return Array.from(expandedMap.keys());
 }
 
 function getIncomeScore(income: number): number {
@@ -290,9 +301,10 @@ export interface SawScoringOptions {
 }
 
 const LEGACY_TARGET_WEIGHTS: Record<string, number> = {
-  income: 0.35,
-  employment: 0.3,
-  house: 0.2,
+  income: 0.30,
+  poverty: 0.10,
+  employment: 0.25,
+  house: 0.20,
   family: 0.15,
 };
 
@@ -416,28 +428,45 @@ export function calculateBwmWeights(
   activeCriteriaArg?: string[]
 ): Record<string, number> {
   const normalizedInput = normalizeBwmInput(input, activeCriteriaArg);
+
+  // 1. Jalankan solver Python jika env diaktifkan
+  try {
+    if (typeof process !== 'undefined' && process?.env?.USE_PY_BWM === '1') {
+      const script = path.join(process.cwd(), 'tools', 'bwm_solver.py');
+      
+      const spawnResult = cp.spawnSync(
+        process.env.PYTHON || 'python',
+        [script],
+        { 
+          input: JSON.stringify(normalizedInput), 
+          encoding: 'utf8', 
+          maxBuffer: 10 * 1024 * 1024 
+        }
+      );
+
+      if (spawnResult && spawnResult.status === 0 && spawnResult.stdout) {
+        const parsed = JSON.parse(spawnResult.stdout.toString());
+        if (parsed && typeof parsed === 'object' && parsed.weights) {
+          return parsed.weights as Record<string, number>;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Koneksi ke Python solver gagal, menggunakan fallback JS.");
+  }
+
+  // 2. Jalur fallback: multiplicative BWM (LLSM analytical solution)
+  //    w_j ∝ sqrt(a_jW / a_Bj), normalized to sum = 1
   const activeCriteria = normalizedInput.criteria;
-
-  const rawFromBest: Record<string, number> = {};
-  const rawFromWorst: Record<string, number> = {};
+  const rawWeights: Record<string, number> = {};
 
   for (const key of activeCriteria) {
-    rawFromBest[key] = 1 / sanitizeComparison(Number(normalizedInput.bestToOthers[key] ?? 1));
-    rawFromWorst[key] = sanitizeComparison(Number(normalizedInput.othersToWorst[key] ?? 1));
+    const aBj = sanitizeComparison(Number(normalizedInput.bestToOthers[key] ?? 1));
+    const ajW = sanitizeComparison(Number(normalizedInput.othersToWorst[key] ?? 1));
+    rawWeights[key] = Math.sqrt(ajW / aBj);
   }
 
-  rawFromBest[normalizedInput.bestCriterion] = 1;
-  rawFromWorst[normalizedInput.worstCriterion] = 1;
-
-  const fromBest = normalizeWeightsOnActive(rawFromBest, activeCriteria);
-  const fromWorst = normalizeWeightsOnActive(rawFromWorst, activeCriteria);
-
-  const merged: Record<string, number> = {};
-  for (const key of activeCriteria) {
-    merged[key] = Math.sqrt((fromBest[key] || 0) * (fromWorst[key] || 0));
-  }
-
-  return normalizeWeightsOnActive(merged, activeCriteria);
+  return normalizeWeightsOnActive(rawWeights, activeCriteria);
 }
 
 export function buildSawBwmConfig(
@@ -450,9 +479,36 @@ export function buildSawBwmConfig(
 } {
   const criteriaOptions = getSawDefaultCriteriaOptions();
   const initial = sanitizeActiveCriteria(activeCriteria || bwmInput?.criteria);
+
+  // BWM: compute weights on parent criteria only, then distribute to children
+  const parentCriteria = initial.filter((key) => !key.includes('.'));
+  const parentWeights = calculateBwmWeights(
+    { ...bwmInput, criteria: parentCriteria },
+    parentCriteria
+  );
+
+  // Expand criteria for SAW scoring, distributing parent weight equally to children
   const criteria = expandActiveCriteria(initial, criteriaOptions);
-  const normalizedInput = normalizeBwmInput({ ...bwmInput, criteria }, criteria);
-  const weights = calculateBwmWeights(normalizedInput, criteria);
+  const distributedWeights: Record<string, number> = {};
+  for (const key of criteria) {
+    if (!key.includes('.')) {
+      distributedWeights[key] = parentWeights[key] || 0;
+    } else {
+      const parent = key.split('.')[0];
+      const siblings = criteria.filter((k) => k.startsWith(parent + '.'));
+      const perChild = siblings.length > 0
+        ? (parentWeights[parent] || 0) / siblings.length
+        : 0;
+      distributedWeights[key] = perChild;
+    }
+  }
+
+  // Normalize to ensure sum = 1
+  const weights = normalizeWeightsOnActive(distributedWeights, criteria);
+
+  // BWM input only uses parent criteria (no sub-criteria)
+  const parsedInput = { ...bwmInput, criteria: parentCriteria };
+  const normalizedInput = normalizeBwmInput(parsedInput, parentCriteria);
 
   return {
     activeCriteria: criteria,

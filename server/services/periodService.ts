@@ -1,33 +1,4 @@
 import { pool } from '../database';
-import { getRawSawBwmConfig } from './beneficiaryService';
-import type { PoolClient } from 'pg';
-import {
-  buildSawBwmConfig,
-  calculateMetodeSAWDetailed,
-  getSawDefaultCriteriaOptions,
-  type SawCriteriaOption,
-} from '../../shared/metodeSAW';
-
-interface PeriodBwmConfig {
-  criteriaOptions: SawCriteriaOption[];
-  activeCriteria: string[];
-  bestCriterion: string;
-  worstCriterion: string;
-  bestToOthers: Record<string, number>;
-  othersToWorst: Record<string, number>;
-  weights: Record<string, number>;
-}
-
-function parseJsonColumn<T>(value: any, fallback: T): T {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === 'object') return value as T;
-  if (typeof value !== 'string') return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function normalizeScaleValue(value: unknown): number {
   const parsed = Number(value);

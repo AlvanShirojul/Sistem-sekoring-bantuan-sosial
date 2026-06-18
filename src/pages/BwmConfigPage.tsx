@@ -55,9 +55,15 @@ export default function BwmConfigPage() {
   const sortedActiveCriteria = useMemo(() => {
     const activeSet = new Set(activeCriteria);
     return criteriaOptions
-      .filter((item) => activeSet.has(item.key))
+      .filter((item) => activeSet.has(item.key) && !item.parentKey && !String(item.key).includes('.'))
       .map((item) => item.key);
   }, [criteriaOptions, activeCriteria]);
+
+  // Only show these main criteria in the BWM calculation section
+  const BWM_VISIBLE_KEYS = ['income', 'house', 'family', 'employment'];
+  const calcCriteria = useMemo(() => {
+    return sortedActiveCriteria.filter((k) => BWM_VISIBLE_KEYS.includes(k));
+  }, [sortedActiveCriteria]);
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -76,6 +82,13 @@ export default function BwmConfigPage() {
 
       const data: BwmConfigResponse = await response.json();
       setCriteriaOptions(data.criteriaOptions || []);
+      // Debug: show criteriaOptions in browser console to inspect parentKey/dot notation
+      try {
+        // eslint-disable-next-line no-console
+        console.log('BWM criteriaOptions:', data.criteriaOptions);
+      } catch (e) {
+        // ignore
+      }
       setActiveCriteria(data.activeCriteria || []);
       setBestCriterion(data.bestCriterion || '');
       setWorstCriterion(data.worstCriterion || '');
@@ -253,6 +266,12 @@ export default function BwmConfigPage() {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Token tidak ditemukan. Silakan login ulang.');
+        setSaving(false);
+        return;
+      }
+
       const response = await fetch('/api/beneficiaries/bwm-config', {
         method: 'PUT',
         headers: {
@@ -263,8 +282,17 @@ export default function BwmConfigPage() {
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Gagal menyimpan konfigurasi BWM');
+        // Log response body for debugging (may be JSON or text)
+        let errBody = null;
+        try {
+          errBody = await response.json();
+        } catch (e) {
+          try { errBody = await response.text(); } catch { errBody = '<unreadable>'; }
+        }
+        // eslint-disable-next-line no-console
+        console.error('Failed to save BWM config:', response.status, errBody);
+        const errMsg = (errBody && errBody.error) ? errBody.error : `Gagal menyimpan konfigurasi BWM (status ${response.status})`;
+        throw new Error(errMsg);
       }
 
       const data: BwmConfigResponse = await response.json();
@@ -307,6 +335,12 @@ export default function BwmConfigPage() {
     setCalculating(true);
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Token tidak ditemukan. Silakan login ulang.');
+        setCalculating(false);
+        return;
+      }
+
       const response = await fetch('/api/beneficiaries/bwm-config/preview', {
         method: 'POST',
         headers: {
@@ -317,8 +351,16 @@ export default function BwmConfigPage() {
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Gagal menghitung BWM');
+        let errBody = null;
+        try {
+          errBody = await response.json();
+        } catch (e) {
+          try { errBody = await response.text(); } catch { errBody = '<unreadable>'; }
+        }
+        // eslint-disable-next-line no-console
+        console.error('Failed to calculate BWM preview:', response.status, errBody);
+        const errMsg = (errBody && errBody.error) ? errBody.error : `Gagal menghitung BWM (status ${response.status})`;
+        throw new Error(errMsg);
       }
 
       const data: BwmConfigResponse = await response.json();
@@ -383,7 +425,7 @@ export default function BwmConfigPage() {
                 className="rounded-md border-slate-300"
               >
                 <option value="">Kriteria Utama</option>
-                {criteriaOptions.filter(item => !item.parentKey).map((item) => (
+                {criteriaOptions.filter(item => !item.parentKey && !String(item.key).includes('.')).map((item) => (
                   <option key={item.key} value={item.key}>
                     Sub dari: {item.label}
                   </option>
@@ -401,7 +443,7 @@ export default function BwmConfigPage() {
           </div>
           <div className="mt-3 space-y-2">
                 {criteriaOptions
-              .filter(item => !String(item.key).includes('.'))
+              .filter(item => !item.parentKey && !String(item.key).includes('.'))
               .map((item) => {
                 const checked = activeCriteria.includes(item.key);
                 // Sub-criteria are hidden in the UI; backend still uses them for scoring.
@@ -443,7 +485,7 @@ export default function BwmConfigPage() {
               onChange={(e) => setBestCriterion(e.target.value)}
               className="mt-1 w-full rounded-md border-slate-300"
             >
-              {sortedActiveCriteria.map((key) => {
+              {calcCriteria.map((key) => {
                 const label = criteriaOptions.find((item) => item.key === key)?.label || key;
                 return (
                   <option key={key} value={key}>
@@ -461,7 +503,7 @@ export default function BwmConfigPage() {
               onChange={(e) => setWorstCriterion(e.target.value)}
               className="mt-1 w-full rounded-md border-slate-300"
             >
-              {sortedActiveCriteria.map((key) => {
+              {calcCriteria.map((key) => {
                 const label = criteriaOptions.find((item) => item.key === key)?.label || key;
                 return (
                   <option key={key} value={key}>
@@ -478,7 +520,7 @@ export default function BwmConfigPage() {
             <h3 className="text-base font-semibold text-slate-700">4. Best to Others (aBj)</h3>
             <p className="text-xs text-slate-500 mb-3">Seberapa lebih penting kriteria terbaik dibanding kriteria lain.</p>
             <div className="space-y-2">
-              {sortedActiveCriteria.map((key) => {
+              {calcCriteria.map((key) => {
                 const label = criteriaOptions.find((item) => item.key === key)?.label || key;
                 const disabled = key === bestCriterion;
                 return (
@@ -509,7 +551,7 @@ export default function BwmConfigPage() {
             <h3 className="text-base font-semibold text-slate-700">5. Others to Worst (ajW)</h3>
             <p className="text-xs text-slate-500 mb-3">Seberapa lebih penting tiap kriteria dibanding kriteria terburuk.</p>
             <div className="space-y-2">
-              {sortedActiveCriteria.map((key) => {
+              {calcCriteria.map((key) => {
                 const label = criteriaOptions.find((item) => item.key === key)?.label || key;
                 const disabled = key === worstCriterion;
                 return (
@@ -545,7 +587,7 @@ export default function BwmConfigPage() {
             </p>
           )}
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-            {sortedActiveCriteria.map((key) => {
+            {calcCriteria.map((key) => {
               const label = criteriaOptions.find((item) => item.key === key)?.label || key;
               const weight = Number(weights[key] || 0);
               return (

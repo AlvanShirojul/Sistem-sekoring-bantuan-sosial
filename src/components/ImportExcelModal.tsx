@@ -62,7 +62,7 @@ export default function ImportExcelModal({ isOpen, onClose, onImportSuccess }) {
         const keys = Array.isArray(payload?.criteriaOptions)
           ? payload.criteriaOptions
               .map((item: any) => String(item?.key || '').trim().toLowerCase())
-              .filter(Boolean)
+              .filter((k: string) => k && !k.includes('.'))
           : [];
         setCriteriaKeys(Array.from(new Set(keys)));
       } catch (err) {

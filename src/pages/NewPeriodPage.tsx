@@ -33,7 +33,7 @@ export default function NewPeriodPage() {
   const scaleOptions = Array.from({ length: 9 }, (_, i) => i + 1);
 
   const sortedActiveCriteria = criteriaOptions
-    .filter((item) => activeCriteria.includes(item.key))
+    .filter((item) => activeCriteria.includes(item.key) && !String(item.key).includes('.'))
     .map((item) => item.key);
 
   const toggleActiveCriterion = (key) => {

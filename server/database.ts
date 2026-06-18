@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import { createDefaultBwmInput, getSawCriteriaKeys, getSawDefaultCriteriaOptions } from '../shared/metodeSAW';
+import { createDefaultBwmInput, getSawCriteriaKeys, getSawDefaultCriteriaOptions, calculateBwmWeights } from '../shared/metodeSAW';
 
 dotenv.config();
 
@@ -12,7 +12,7 @@ export const pool = new Pool({
   password: process.env.DB_PASSWORD || 'postgres',
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'social_assistance',
+  database: process.env.DB_NAME || 'postgres',
   ssl: {
     rejectUnauthorized: false
   }
@@ -160,6 +160,7 @@ export async function initializeDatabase() {
         worst_criterion TEXT NOT NULL,
         best_to_others JSONB NOT NULL,
         others_to_worst JSONB NOT NULL,
+        weights JSONB,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -167,6 +168,12 @@ export async function initializeDatabase() {
     const defaultCriteria = getSawCriteriaKeys();
     const defaultBwm = createDefaultBwmInput(defaultCriteria);
     const defaultCriteriaOptions = getSawDefaultCriteriaOptions();
+    let defaultWeights: Record<string, number> = {};
+    try {
+      defaultWeights = calculateBwmWeights(defaultBwm, defaultBwm.criteria);
+    } catch (e) {
+      defaultWeights = {};
+    }
 
     // Backward-compatible migration for criteria_scores and BWM criteria_options.
     await pool.query(`
@@ -202,6 +209,13 @@ export async function initializeDatabase() {
         JSON.stringify(defaultBwm.bestToOthers),
         JSON.stringify(defaultBwm.othersToWorst),
       ]
+    );
+
+    // Ensure weights column exists and seed weights for existing row if empty
+    await pool.query(`ALTER TABLE saw_bwm_config ADD COLUMN IF NOT EXISTS weights JSONB;`);
+    await pool.query(
+      `UPDATE saw_bwm_config SET weights = $1::jsonb WHERE weights IS NULL`,
+      [JSON.stringify(defaultWeights)]
     );
 
     // Create beneficiaries table

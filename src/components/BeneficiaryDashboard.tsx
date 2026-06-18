@@ -152,15 +152,48 @@ export default function BeneficiaryDashboard({ onBeneficiariesUpdate }) {
             <div className="p-2 bg-slate-50 rounded border border-slate-200">
               <p className="text-xs font-medium text-slate-800">Bobot Kriteria Periode</p>
               <div className="mt-1 space-y-1">
-                {Object.entries(selectedPeriodData.bwm_config.weights).map(([key, value]) => {
-                  const label = selectedPeriodData.bwm_config.criteriaOptions?.find((item) => item.key === key)?.label || key;
-                  return (
-                    <div key={key} className="flex items-center justify-between text-xs text-slate-700">
-                      <span>{label}</span>
-                      <strong>{Number(value).toFixed(4)}</strong>
-                    </div>
-                  );
-                })}
+                {
+                  (() => {
+                    const weights = selectedPeriodData.bwm_config.weights || {};
+                    const options = Array.isArray(selectedPeriodData.bwm_config.criteriaOptions) ? selectedPeriodData.bwm_config.criteriaOptions : [];
+                    const BWM_VISIBLE_KEYS = ['income', 'house', 'family', 'employment'];
+
+                    // Helper to get a readable label for a main key. Prefer explicit option label if present.
+                    const getLabel = (key) => {
+                      const exact = options.find((item) => item.key === key && !item.parentKey && !String(item.key).includes('.'));
+                      if (exact && exact.label) return exact.label;
+                      const map = {
+                        income: 'Penghasilan Bulanan',
+                        house: 'Kondisi Rumah',
+                        family: 'Jumlah Tanggungan',
+                        employment: 'Pekerjaan',
+                      };
+                      return map[key] || key;
+                    };
+
+                    // Compute aggregate weight for a main key: prefer explicit root weight, otherwise sum sub-keys
+                    const getWeight = (key) => {
+                      if (weights[key] !== undefined) return Number(weights[key]);
+                      return Object.entries(weights).reduce((acc, [wk, wv]) => {
+                        if (String(wk) === key || String(wk).startsWith(key + '.')) {
+                          return acc + Number(wv || 0);
+                        }
+                        return acc;
+                      }, 0);
+                    };
+
+                    return BWM_VISIBLE_KEYS.map((key) => {
+                      const label = getLabel(key);
+                      const value = getWeight(key);
+                      return (
+                        <div key={key} className="flex items-center justify-between text-xs text-slate-700">
+                          <span>{label}</span>
+                          <strong>{value.toFixed(4)}</strong>
+                        </div>
+                      );
+                    });
+                  })()
+                }
               </div>
             </div>
           )}
@@ -192,14 +225,14 @@ export default function BeneficiaryDashboard({ onBeneficiariesUpdate }) {
               <option value="Tidak Layak">Tidak Layak</option>
             </select>
           </div>
-          <div className="flex flex-row gap-2 overflow-x-auto pb-1 ml-auto">
+          <div className="flex flex-wrap gap-2 pb-1 ml-auto justify-end">
             <button onClick={handleExport} title="Export ke Excel" className={`${actionButtonBaseClasses} text-slate-700 bg-white border border-slate-300 hover:bg-slate-50`}>
               <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7 10 12 15 17 10"></polyline>
                 <line x1="12" y1="15" x2="12" y2="3"></line>
               </svg>
-              <span className="hidden md:inline">Export ke Excel</span>
+              <span className="inline">Export</span>
             </button>
             <Link to={`/upload?periodId=${selectedPeriod}`} title="Upload Blanko" className={`${actionButtonBaseClasses} text-white bg-sky-600 shadow-sm hover:bg-sky-500 text-center`}>
               <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -207,14 +240,14 @@ export default function BeneficiaryDashboard({ onBeneficiariesUpdate }) {
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
-              <span className="hidden md:inline">Upload Blanko</span>
+              <span className="inline">Upload</span>
             </Link>
-            <Link to="/period/new" title="Periode Baru" className={`${actionButtonBaseClasses} font-semibold text-white bg-indigo-600 shadow-sm hover:bg-indigo-500 text-center`}>
+            <Link to="/period/new" title="Tambah Periode Baru" className={`${actionButtonBaseClasses} text-white bg-indigo-600 shadow-sm hover:bg-indigo-500 text-center`}>
               <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
               </svg>
-              <span className="hidden md:inline">Periode Baru</span>
+              <span className="inline">Tambah Periode</span>
             </Link>
             {selectedPeriod && (
               <Link to={`/period/${selectedPeriod}/edit`} title="Edit Periode" className={`${actionButtonBaseClasses} font-semibold text-white bg-slate-700 shadow-sm hover:bg-slate-600 text-center`}>
@@ -222,7 +255,7 @@ export default function BeneficiaryDashboard({ onBeneficiariesUpdate }) {
                   <path d="M12 20h9"></path>
                   <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
                 </svg>
-                <span className="hidden md:inline">Edit Periode</span>
+                <span className="inline">Edit</span>
               </Link>
             )}
           </div>

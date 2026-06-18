@@ -1,4 +1,6 @@
 import { pool } from '../database';
+import cp from 'child_process';
+import path from 'path';
 import { VALID_BENEFICIARY_STATUS, DEFAULT_BENEFICIARY_SCORE, DEFAULT_BENEFICIARY_STATUS } from '../utils/constants';
 import {
   buildSawBwmConfig,
@@ -8,6 +10,34 @@ import {
   type SawCriteriaOption,
   type BwmInput,
 } from '../../shared/metodeSAW';
+
+function callPythonBwm(input: Partial<BwmInput>): Record<string, number> | null {
+  // Call Python solver and throw on failure (fail-fast)
+  const script = path.join(process.cwd(), 'tools', 'bwm_solver.py');
+  const spawnResult = cp.spawnSync(
+    process.env.PYTHON || 'python',
+    [script],
+    { input: JSON.stringify(input), encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
+  );
+
+  const stderr = spawnResult && spawnResult.stderr ? String(spawnResult.stderr) : '';
+  const stdout = spawnResult && spawnResult.stdout ? String(spawnResult.stdout) : '';
+
+  if (!spawnResult || spawnResult.status !== 0) {
+    const detail = stderr || stdout || `exit=${spawnResult && spawnResult.status}`;
+    throw new Error(`Python BWM solver failed: ${detail}`);
+  }
+
+  try {
+    const parsed = JSON.parse(stdout);
+    if (parsed && typeof parsed === 'object' && parsed.weights) {
+      return parsed.weights as Record<string, number>;
+    }
+    throw new Error('Python BWM solver returned invalid payload');
+  } catch (e: any) {
+    throw new Error(`Python BWM solver parse error: ${String(e?.message || e)}`);
+  }
+}
 
 interface SawBwmConfigResponse {
   activeCriteria: string[];
@@ -229,7 +259,7 @@ export async function getRawSawBwmConfig(): Promise<SawBwmConfigResponse> {
   const row = result.rows[0];
   const criteriaOptions = parseJsonColumn<SawCriteriaOption[]>(row.criteria_options, []);
   const activeCriteria = parseJsonColumn<string[]>(row.active_criteria, []);
-  return buildBwmConfigResponse(
+  const resolved = buildBwmConfigResponse(
     criteriaOptions,
     activeCriteria,
     {
@@ -240,6 +270,14 @@ export async function getRawSawBwmConfig(): Promise<SawBwmConfigResponse> {
       othersToWorst: parseJsonColumn<Partial<Record<string, number>>>(row.others_to_worst, {}),
     }
   );
+
+  // If weights stored in DB, prefer them (they should be normalized already)
+  const storedWeights = parseJsonColumn<Partial<Record<string, number>>>(row.weights, null as any);
+  if (storedWeights && Object.keys(storedWeights).length > 0) {
+    resolved.weights = storedWeights as Record<string, number>;
+  }
+
+  return resolved;
 }
 
 function getParentKey(key: string) {
@@ -277,6 +315,21 @@ function transformConfigForClient(resolved: SawBwmConfigResponse) {
 
 export async function previewSawBwmConfig(payload: any): Promise<SawBwmConfigResponse> {
   const { resolved } = resolveBwmPayload(payload || {});
+  // Prefer Python solver for BWM weights. If it fails, fall back to JS-computed weights.
+  // Use parent criteria only (no sub-criteria with dots) for BWM solver.
+  const parentCriteria = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  const pythonWeights = callPythonBwm({
+    criteria: parentCriteria,
+    bestCriterion: resolved.bestCriterion,
+    worstCriterion: resolved.worstCriterion,
+    bestToOthers: resolved.bestToOthers,
+    othersToWorst: resolved.othersToWorst,
+  });
+
+  if (pythonWeights && Object.keys(pythonWeights).length > 0) {
+    resolved.weights = pythonWeights;
+  }
+
   return transformConfigForClient(resolved);
 }
 
@@ -284,11 +337,29 @@ export async function saveSawBwmConfig(payload: any): Promise<SawBwmConfigRespon
   const { criteriaOptions, resolved } = resolveBwmPayload(payload || {});
 
   await snapshotSawCalculationResults('before_bwm_update');
+  // Compute authoritative normalized weights (prefer Python solver)
+  // Use parent criteria only (no sub-criteria with dots) for BWM solver.
+  const parentCriteria = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  try {
+    const pythonWeights = callPythonBwm({
+      criteria: parentCriteria,
+      bestCriterion: resolved.bestCriterion,
+      worstCriterion: resolved.worstCriterion,
+      bestToOthers: resolved.bestToOthers,
+      othersToWorst: resolved.othersToWorst,
+    });
+    if (pythonWeights && Object.keys(pythonWeights).length > 0) {
+      resolved.weights = pythonWeights;
+    }
+  } catch (err) {
+    // log and continue; resolved.weights already has computed weights (fallback)
+    console.warn('Python BWM solver unavailable during save; using computed weights.');
+  }
 
   await pool.query(
     `INSERT INTO saw_bwm_config (
-      id, criteria_options, active_criteria, best_criterion, worst_criterion, best_to_others, others_to_worst, updated_at
-    ) VALUES (1, $1::jsonb, $2::jsonb, $3, $4, $5::jsonb, $6::jsonb, CURRENT_TIMESTAMP)
+      id, criteria_options, active_criteria, best_criterion, worst_criterion, best_to_others, others_to_worst, weights, updated_at
+    ) VALUES (1, $1::jsonb, $2::jsonb, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       criteria_options = EXCLUDED.criteria_options,
       active_criteria = EXCLUDED.active_criteria,
@@ -296,6 +367,7 @@ export async function saveSawBwmConfig(payload: any): Promise<SawBwmConfigRespon
       worst_criterion = EXCLUDED.worst_criterion,
       best_to_others = EXCLUDED.best_to_others,
       others_to_worst = EXCLUDED.others_to_worst,
+      weights = EXCLUDED.weights,
       updated_at = CURRENT_TIMESTAMP`,
     [
       JSON.stringify(criteriaOptions),
@@ -304,12 +376,28 @@ export async function saveSawBwmConfig(payload: any): Promise<SawBwmConfigRespon
       resolved.worstCriterion,
       JSON.stringify(resolved.bestToOthers),
       JSON.stringify(resolved.othersToWorst),
+      JSON.stringify(resolved.weights || {}),
     ]
   );
 
   // Keep residents.criteria_scores aligned with the latest criteria master.
   await ensureResidentCriteriaScoreKeys(criteriaOptions.map((item) => item.key));
   await syncAllBeneficiaryScores();
+  // After saving, compute weights with Python solver to return authoritative weights to UI.
+  const parentCriteriaForReturn = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  const pythonWeights = callPythonBwm({
+    criteria: parentCriteriaForReturn,
+    bestCriterion: resolved.bestCriterion,
+    worstCriterion: resolved.worstCriterion,
+    bestToOthers: resolved.bestToOthers,
+    othersToWorst: resolved.othersToWorst,
+  });
+
+  if (pythonWeights && Object.keys(pythonWeights).length > 0) {
+    resolved.weights = pythonWeights;
+    return transformConfigForClient(resolved);
+  }
+
   return getSawBwmConfig();
 }
 
@@ -622,6 +710,22 @@ export async function getAllResidentStatistics() {
     throw error;
   }
 }
+/**
+ * Get all periods
+ */
+export async function getAllPeriods() {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, start_date, end_date, quota, description 
+       FROM periods 
+       ORDER BY start_date DESC`
+    );
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+}
+
 export async function getBeneficiaryById(id: number) {
   try {
     const result = await pool.query(

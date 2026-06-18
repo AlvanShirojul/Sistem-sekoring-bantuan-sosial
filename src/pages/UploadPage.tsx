@@ -59,7 +59,7 @@ export default function UploadPage() {
                 key: String(item?.key || '').trim().toLowerCase(),
                 label: String(item?.label || item?.key || '').trim(),
               }))
-              .filter((item: CriteriaOption) => item.key && item.label)
+              .filter((item: CriteriaOption) => item.key && item.label && !item.key.includes('.'))
           : [];
 
         setCriteriaOptions(options);
