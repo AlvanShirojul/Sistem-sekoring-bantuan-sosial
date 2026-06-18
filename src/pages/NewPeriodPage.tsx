@@ -97,20 +97,33 @@ export default function NewPeriodPage() {
     });
   }, [activeCriteria, bestCriterion, worstCriterion]);
 
-  const buildBwmPayload = () => ({
-    criteriaOptions,
-    activeCriteria: sortedActiveCriteria,
-    bestCriterion,
-    worstCriterion,
-    bestToOthers: sortedActiveCriteria.reduce((acc, key) => {
-      acc[key] = key === bestCriterion ? 1 : asScaleValue(bestToOthers[key] ?? 1);
-      return acc;
-    }, {}),
-    othersToWorst: sortedActiveCriteria.reduce((acc, key) => {
-      acc[key] = key === worstCriterion ? 1 : asScaleValue(othersToWorst[key] ?? 1);
-      return acc;
-    }, {}),
-  });
+  const buildBwmPayload = () => {
+    // Validasi: bestCriterion dan worstCriterion HARUS ada di sortedActiveCriteria
+    // Jika tidak, fallback ke kriteria pertama/terakhir
+    const validBest = sortedActiveCriteria.includes(bestCriterion)
+      ? bestCriterion
+      : sortedActiveCriteria[0] || '';
+
+    const validWorst = sortedActiveCriteria.includes(worstCriterion)
+      ? worstCriterion
+      : sortedActiveCriteria[sortedActiveCriteria.length - 1] || '';
+
+    return {
+      criteriaOptions,
+      activeCriteria: sortedActiveCriteria,
+      criteria: sortedActiveCriteria, // ← Untuk Python BWM solver
+      bestCriterion: validBest,
+      worstCriterion: validWorst,
+      bestToOthers: sortedActiveCriteria.reduce((acc, key) => {
+        acc[key] = key === validBest ? 1 : asScaleValue(bestToOthers[key] ?? 1);
+        return acc;
+      }, {}),
+      othersToWorst: sortedActiveCriteria.reduce((acc, key) => {
+        acc[key] = key === validWorst ? 1 : asScaleValue(othersToWorst[key] ?? 1);
+        return acc;
+      }, {}),
+    };
+  };
 
   const handleCalculateBwm = async () => {
     if (sortedActiveCriteria.length < 2) {

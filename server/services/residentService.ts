@@ -538,8 +538,8 @@ export async function bulkInsertResidents(residents: any[]) {
   const chunkSize = BATCH_INSERT_CHUNK_SIZE;
   for (let i = 0; i < validResidents.length; i += chunkSize) {
     const chunk = validResidents.slice(i, i + chunkSize);
-    const placeholders = [];
-    const values = [];
+    const placeholders: string[] = [];
+    const values: unknown[] = [];
     let paramCount = 1;
 
     chunk.forEach(({ validated }) => {
@@ -575,13 +575,25 @@ export async function bulkInsertResidents(residents: any[]) {
     });
 
     try {
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO residents (name, nik, family_card_no, address, rt, rw, dusun, desa, kecamatan, kabupaten, birth_place, birth_date, gender, marital_status, occupation, monthly_income, poverty_level, house_conditions, family_size, phone_number, email, education, criteria_scores)
          VALUES ${placeholders.join(', ')}
-         ON CONFLICT (nik) DO NOTHING`,
+         ON CONFLICT (nik) DO NOTHING
+         RETURNING nik`,
         values
       );
-      successful += chunk.length;
+      const insertedCount = insertResult.rowCount || 0;
+      successful += insertedCount;
+      const skippedCount = chunk.length - insertedCount;
+      if (skippedCount > 0) {
+        failed += skippedCount;
+        for (let k = 0; k < skippedCount; k++) {
+          errors.push({ 
+            resident: chunk[k + insertedCount]?.original || { name: 'unknown', nik: 'unknown' }, 
+            error: 'NIK already exists (skipped by batch insert)' 
+          });
+        }
+      }
     } catch (error) {
       // Fallback to individual insert for detailed error info
       for (const { original, validated } of chunk) {

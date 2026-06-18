@@ -14,6 +14,7 @@ import {
 function callPythonBwm(input: Partial<BwmInput>): Record<string, number> | null {
   // Call Python solver and throw on failure (fail-fast)
   const script = path.join(process.cwd(), 'tools', 'bwm_solver.py');
+  
   const spawnResult = cp.spawnSync(
     process.env.PYTHON || 'python',
     [script],
@@ -315,9 +316,11 @@ function transformConfigForClient(resolved: SawBwmConfigResponse) {
 
 export async function previewSawBwmConfig(payload: any): Promise<SawBwmConfigResponse> {
   const { resolved } = resolveBwmPayload(payload || {});
-  // Prefer Python solver for BWM weights. If it fails, fall back to JS-computed weights.
-  // Use parent criteria only (no sub-criteria with dots) for BWM solver.
-  const parentCriteria = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  
+  // Extract parent criteria from expanded activeCriteria by getting unique parent keys
+  // activeCriteria may contain sub-keys like 'house.permanen', so we extract parent 'house'
+  const parentCriteria = [...new Set(resolved.activeCriteria.map(key => key.split('.')[0]))];
+  
   const pythonWeights = callPythonBwm({
     criteria: parentCriteria,
     bestCriterion: resolved.bestCriterion,
@@ -339,7 +342,7 @@ export async function saveSawBwmConfig(payload: any): Promise<SawBwmConfigRespon
   await snapshotSawCalculationResults('before_bwm_update');
   // Compute authoritative normalized weights (prefer Python solver)
   // Use parent criteria only (no sub-criteria with dots) for BWM solver.
-  const parentCriteria = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  const parentCriteria = [...new Set(resolved.activeCriteria.map(key => key.split('.')[0]))];
   try {
     const pythonWeights = callPythonBwm({
       criteria: parentCriteria,
@@ -384,7 +387,7 @@ export async function saveSawBwmConfig(payload: any): Promise<SawBwmConfigRespon
   await ensureResidentCriteriaScoreKeys(criteriaOptions.map((item) => item.key));
   await syncAllBeneficiaryScores();
   // After saving, compute weights with Python solver to return authoritative weights to UI.
-  const parentCriteriaForReturn = resolved.activeCriteria.filter((key) => !key.includes('.'));
+  const parentCriteriaForReturn = [...new Set(resolved.activeCriteria.map(key => key.split('.')[0]))];
   const pythonWeights = callPythonBwm({
     criteria: parentCriteriaForReturn,
     bestCriterion: resolved.bestCriterion,

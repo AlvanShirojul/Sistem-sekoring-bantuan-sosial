@@ -1,0 +1,7 @@
+{
+  "criteria": ["income", "house", "family", "employment"],
+  "bestCriterion": "income",
+  "worstCriterion": "house",
+  "bestToOthers": {"income": 1, "house": 5, "family": 3, "employment": 2},
+  "othersToWorst": {"income": 5, "house": 1, "family": 3, "employment": 4}
+}
