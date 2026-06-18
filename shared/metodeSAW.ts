@@ -92,24 +92,11 @@ export function getSawCriteriaKeys(): SawKnownCriteriaKey[] {
 }
 
 export function getSawDefaultCriteriaOptions(): SawCriteriaOption[] {
-  // Builtin criteria options including sub-criteria (flattened keys)
+  // Builtin criteria options - parent criteria only (no sub-criteria)
   const options: SawCriteriaOption[] = [];
 
   for (const item of SAW_CRITERIA_META) {
     options.push({ key: item.key, label: item.label, type: item.type, source: 'builtin' });
-
-    if (item.key === 'house') {
-      options.push({ key: 'house.permanen', label: 'Permanen', type: item.type, source: 'builtin' });
-      options.push({ key: 'house.semi_permanen', label: 'Semi Permanen', type: item.type, source: 'builtin' });
-      options.push({ key: 'house.non_permanen', label: 'Non-Permanen', type: item.type, source: 'builtin' });
-    }
-
-    if (item.key === 'employment') {
-      options.push({ key: 'employment.tidak_bekerja', label: 'Tidak bekerja', type: item.type, source: 'builtin' });
-      options.push({ key: 'employment.buruh', label: 'Buruh', type: item.type, source: 'builtin' });
-      options.push({ key: 'employment.swasta', label: 'Swasta', type: item.type, source: 'builtin' });
-      options.push({ key: 'employment.pns', label: 'PNS', type: item.type, source: 'builtin' });
-    }
   }
 
   return options;
@@ -544,19 +531,23 @@ function buildIncompleteRow(id: number | string | undefined, status: string): Sa
     status,
     rank: null,
     raw_income: null,
+    raw_employment: null,
     raw_poverty: null,
     raw_house: null,
     raw_family: null,
     min_income: null,
     max_income: null,
+    max_employment: null,
     max_poverty: null,
     max_house: null,
     max_family: null,
     normalized_income: null,
+    normalized_employment: null,
     normalized_poverty: null,
     normalized_house: null,
     normalized_family: null,
     weighted_income: null,
+    weighted_employment: null,
     weighted_poverty: null,
     weighted_house: null,
     weighted_family: null,
@@ -569,7 +560,7 @@ function buildIncompleteRow(id: number | string | undefined, status: string): Sa
 
 function mapBuiltInOrNull(map: Record<string, number> | undefined, key: SawKnownCriteriaKey): number | null {
   const value = map?.[key];
-  if (!Number.isFinite(value)) return null;
+  if (value === undefined || !Number.isFinite(value)) return null;
   return value;
 }
 
@@ -699,19 +690,23 @@ export function calculateMetodeSAWDetailed(
       status: scored?.status || incompleteStatus,
       rank: rankById.get(row.resident.id) ?? null,
       raw_income: rankedRow?.raw_income ?? null,
+      raw_employment: rankedRow?.raw_employment ?? null,
       raw_poverty: rankedRow?.raw_poverty ?? null,
       raw_house: rankedRow?.raw_house ?? null,
       raw_family: rankedRow?.raw_family ?? null,
       min_income: rankedRow?.min_income ?? null,
       max_income: rankedRow?.max_income ?? null,
+      max_employment: rankedRow?.max_employment ?? null,
       max_poverty: rankedRow?.max_poverty ?? null,
       max_house: rankedRow?.max_house ?? null,
       max_family: rankedRow?.max_family ?? null,
       normalized_income: rankedRow?.normalized_income ?? null,
+      normalized_employment: rankedRow?.normalized_employment ?? null,
       normalized_poverty: rankedRow?.normalized_poverty ?? null,
       normalized_house: rankedRow?.normalized_house ?? null,
       normalized_family: rankedRow?.normalized_family ?? null,
       weighted_income: rankedRow?.weighted_income ?? null,
+      weighted_employment: rankedRow?.weighted_employment ?? null,
       weighted_poverty: rankedRow?.weighted_poverty ?? null,
       weighted_house: rankedRow?.weighted_house ?? null,
       weighted_family: rankedRow?.weighted_family ?? null,
@@ -719,7 +714,7 @@ export function calculateMetodeSAWDetailed(
       criteria_raw_map: rankedRow?.criteria_raw_map ?? null,
       criteria_normalized_map: rankedRow?.criteria_normalized_map ?? null,
       criteria_weighted_map: rankedRow?.criteria_weighted_map ?? null,
-    };
+    } as SawCalculationRow;
   });
 }
 
